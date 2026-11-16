@@ -1,0 +1,38 @@
+name: Refresh Global leaderboard
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+      timezone: America/Chicago
+  workflow_dispatch:
+
+concurrency:
+  group: global-leaderboard
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install browser
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund playwright@1.65.0
+          npx --no-install playwright install chromium --no-shell
+      - name: Collect Global standings
+        run: node scripts/refresh-global-leaderboard.mjs
+      - name: Publish the complete snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          path=leaderboards/v1/global.json
+          if git diff --quiet -- "$path"; then exit 0; fi
+          jq -n --rawfile json "$path" --arg sha "$(git rev-parse "HEAD:$path")" \
+            '{message:"Refresh Global Holomem standings", content:($json | @base64), sha:$sha, branch:"main"}' |
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$path" --input - --silent
