@@ -60,14 +60,24 @@ async function collect(previous,probe){
   const browser=await chromium.launch(executablePath?{executablePath}:{channel:'chromium'});
   try{
     const page=await browser.newPage({locale:'en-US'});
+    page.on('response',response=>{
+      if(response.status()>=400&&['document','script','fetch'].includes(response.request().resourceType())){
+        const url=new URL(response.url());
+        if([api,'https://holodori.best'].includes(url.origin))
+          console.log(`HTTP ${response.status()} for ${url.origin}${url.pathname}`);
+      }
+    });
     await page.route('**/*',route=>['image','font','media'].includes(route.request().resourceType())?
       route.abort():route.continue());
-    const [rosterResponse,firstResponse,navigation]=await Promise.all([
+    const responses=Promise.all([
       page.waitForResponse(api+'/api/holomem/list',{timeout:20_000}),
       page.waitForResponse(response=>isGlobalBoard(response),{timeout:20_000}),
-      page.goto(source,{waitUntil:'domcontentloaded',timeout:20_000}),
     ]);
-    if(!navigation?.ok()||page.url()!==source)throw Error('The public leaderboard page is unavailable.');
+    responses.catch(()=>{});
+    const navigation=await page.goto(source,{waitUntil:'domcontentloaded',timeout:20_000});
+    if(!navigation?.ok()||page.url()!==source||await navigation.headerValue('cf-mitigated')==='challenge')
+      throw Error(`The public leaderboard page did not open normally (HTTP ${navigation?.status()??'unknown'}).`);
+    const [rosterResponse,firstResponse]=await responses;
     const members=readMembers(await readJson(rosterResponse));
     const first=await readJson(firstResponse);
     const dismissIntro=page.locator('.first-visit .first-visit-actions button');
